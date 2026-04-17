@@ -13,15 +13,9 @@ set -euo pipefail
 CB_WORKSPACE="${CB_WORKSPACE:-/workspace}"
 cd "${CB_WORKSPACE}"
 
-# Provision base tools only when running as root in a fresh container
-# (Cloud Build builder). On a dev host, apt-get would need sudo and we
-# assume python3/curl are already installed.
-if [[ "${EUID:-$(id -u)}" -eq 0 ]] && ! command -v uv >/dev/null; then
-  apt-get update -qq >/dev/null
-  apt-get install -y -qq curl ca-certificates python3 >/dev/null
-fi
-
-# Install uv if missing — works for any user (installs into $HOME/.local/bin).
+# The builder image pre-installs uv; this fallback is only hit on dev
+# hosts that don't already have uv (README section 1.1 lists it as a
+# prerequisite) and requires curl on PATH.
 if ! command -v uv >/dev/null; then
   curl -LsSf https://astral.sh/uv/install.sh | sh
 fi

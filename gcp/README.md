@@ -445,12 +445,15 @@ substitutions:
   _ARTIFACT_REGISTRY_PYPI: ""
   _IMAGE_NAME: ""
 timeout: 2400s
+options:
+  logging: CLOUD_LOGGING_ONLY   # required when --service-account is set on the trigger
 steps:
   - name: ${_ARTIFACT_REGISTRY_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REGISTRY_DOCKER}/${_IMAGE_NAME}
     env:
       - HAS_IMAGE=true          # build+push Docker image
       - HAS_PACKAGE=true        # upload wheels in production
       - TEST_KIND=in_image      # "" | in_image | host_package
+      - PROJECT_ID=$PROJECT_ID  # built-in substitution; forward into step container
       - STAGE_NAME=${_STAGE_NAME}
       - ARTIFACT_REGISTRY_LOCATION=${_ARTIFACT_REGISTRY_LOCATION}
       - ARTIFACT_REGISTRY_DOCKER=${_ARTIFACT_REGISTRY_DOCKER}
