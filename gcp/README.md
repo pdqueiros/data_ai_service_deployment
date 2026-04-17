@@ -338,7 +338,7 @@ gcloud builds submit \
 **Auto-rebuild trigger** — rebuilds the image whenever `gcp/scripts/**`, `gcp/builder/Dockerfile`, or `gcp/builder/cloudbuild.yaml` change on `main`. Set `DEPLOY_REPO_NAME` to the linked name of **this deployment repo** (as listed in the 2.5 repositories check):
 
 ```bash
-DEPLOY_REPO_NAME="data_ai_service_deployment"  # <- linked name of THIS repo
+DEPLOY_REPO_NAME="pdqueiros-data_ai_service_deployment"  # <- linked name of THIS repo
 
 gcloud builds triggers create github \
   --name="${IMAGE_NAME}-builder" \
@@ -366,13 +366,14 @@ One pair of triggers (staging + production) per consumer microservice repo.
 Set `CONSUMER_REPO` to the linked name for that microservice, then run both commands:
 
 ```bash
-CONSUMER_REPO="data_vault"  # <- linked name from `gcloud builds repositories list`
+CONSUMER_REPO="pdqueiros-test_repo"          # real linked name (has underscore)
+TRIGGER_BASE="${CONSUMER_REPO//_/-}"         # pdqueiros-test-repo (no underscores)
 
 SUBS="_ARTIFACT_REGISTRY_LOCATION=$REGION,_ARTIFACT_REGISTRY_DOCKER=$ARTIFACT_REGISTRY_DOCKER,_ARTIFACT_REGISTRY_PYPI=$ARTIFACT_REGISTRY_PYPI,_IMAGE_NAME=$IMAGE_NAME"
 REPO_PATH="projects/$PROJECT_NUMBER/locations/$REGION/connections/$CONNECTION_NAME/repositories/$CONSUMER_REPO"
 
 gcloud builds triggers create github \
-  --name="${CONSUMER_REPO}-staging" \
+  --name="${TRIGGER_BASE}-staging" \
   --project="$PROJECT_ID" --region="$REGION" \
   --repository="$REPO_PATH" \
   --branch-pattern='^staging$' \
@@ -382,7 +383,7 @@ gcloud builds triggers create github \
   --substitutions="_STAGE_NAME=staging,$SUBS"
 
 gcloud builds triggers create github \
-  --name="${CONSUMER_REPO}-production" \
+  --name="${TRIGGER_BASE}-production" \
   --project="$PROJECT_ID" --region="$REGION" \
   --repository="$REPO_PATH" \
   --branch-pattern='^production$' \
@@ -398,15 +399,16 @@ The triggers only fire when a push to the matching branch includes a change to `
 
 ```bash
 # List all triggers
-gcloud builds triggers list --project="$PROJECT_ID" --region="$REGION"
-
-# Inspect one
-gcloud builds triggers describe "${CONSUMER_REPO}-staging" \
-  --project="$PROJECT_ID" --region="$REGION"
+gcloud builds triggers list \
+  --project="$PROJECT_ID" --region="$REGION" \
+  --format='table(
+    name,
+    repositoryEventConfig.repository.basename():label=REPO,
+    repositoryEventConfig.push.branch:label=BRANCH
+  )'
 
 # Manual test run (fires without a git push)
-gcloud builds triggers run "${CONSUMER_REPO}-staging" \
-  --project="$PROJECT_ID" --region="$REGION" --branch=staging
+gcloud builds triggers run pdqueiros-test-repo-staging --project="$PROJECT_ID" --region="$REGION" --branch=staging
 ```
 
 The manual run is the fastest feedback loop when first onboarding a repo — it bypasses the `--included-files` filter so you don't need to craft a `CHANGELOG.md` commit yet.

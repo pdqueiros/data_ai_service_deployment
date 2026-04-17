@@ -25,4 +25,4 @@ ENV UV_KEYRING_PROVIDER=subprocess
 ENV BUILD_SCRIPTS_DIR=/opt/cicd_build/scripts
 COPY scripts/ ${BUILD_SCRIPTS_DIR}/
 
-ENTRYPOINT ["bash", "${BUILD_SCRIPTS_DIR}/pipeline.sh"]
+ENTRYPOINT bash ${BUILD_SCRIPTS_DIR}/pipeline.sh
