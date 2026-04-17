@@ -1,0 +1,31 @@
+# Copy this file to your microservice repo root, then edit the three pipeline
+# flags in the `env:` block (HAS_IMAGE, HAS_PACKAGE, TEST_KIND) to match what
+# this repo publishes. The `substitutions:` block is infra — triggers fill it
+# in (Step 4 of gcp/README.md); leave every default as "".
+#
+# Pipeline flag reference:
+#   HAS_IMAGE    true|false  — build+push Docker image (staging) and retag it (production)
+#   HAS_PACKAGE  true|false  — upload Python wheels to Artifact Registry PyPI (production only)
+#   TEST_KIND    ""|in_image|host_package
+#                  "in_image"     pytest inside the built Docker image (requires HAS_IMAGE=true)
+#                  "host_package" uv sync + pytest on the host
+#                  ""             no tests
+#
+
+substitutions:
+  _STAGE_NAME: ""
+  _ARTIFACT_REGISTRY_LOCATION: ""
+  _ARTIFACT_REGISTRY_DOCKER: ""
+  _ARTIFACT_REGISTRY_PYPI: ""
+  _IMAGE_NAME: ""
+timeout: 2400s
+steps:
+  - name: ${_ARTIFACT_REGISTRY_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REGISTRY_DOCKER}/${_IMAGE_NAME}
+    env:
+      - HAS_IMAGE=true
+      - HAS_PACKAGE=true
+      - TEST_KIND=in_image
+      - STAGE_NAME=${_STAGE_NAME}
+      - ARTIFACT_REGISTRY_LOCATION=${_ARTIFACT_REGISTRY_LOCATION}
+      - ARTIFACT_REGISTRY_DOCKER=${_ARTIFACT_REGISTRY_DOCKER}
+      - ARTIFACT_REGISTRY_PYPI=${_ARTIFACT_REGISTRY_PYPI}

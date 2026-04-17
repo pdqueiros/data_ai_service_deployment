@@ -1,0 +1,17 @@
+# Local PyPI server for testing (pypiserver on http://localhost:8080).
+# Mirrors the role Artifact Registry PyPI plays in the GCP pipeline:
+#   - twine uploads go to http://localhost:8080/
+#   - pip/uv install uses http://localhost:8080/simple/
+# Auth is disabled for local-only traffic (`-P . -a .`).
+services:
+  pypi:
+    image: pypiserver/pypiserver:latest
+    container_name: scryn-local-pypi
+    ports:
+      - "8080:8080"
+    command: ["run", "-P", ".", "-a", ".", "--overwrite", "/data/packages"]
+    volumes:
+      - pypi-data:/data/packages
+
+volumes:
+  pypi-data:

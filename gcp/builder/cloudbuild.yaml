@@ -1,0 +1,26 @@
+# Builds and pushes the builder image.
+# Substitutions (_ARTIFACT_REGISTRY_LOCATION, _ARTIFACT_REGISTRY_DOCKER, _IMAGE_NAME) are supplied by the
+# trigger (Step 3.2 in gcp/README.md). For a manual first-ever build, run
+# `gcloud builds submit` with --substitutions (see Step 3.1 in gcp/README.md).
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 600s
+
+steps:
+  - id: build-and-push
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        IMAGE="${_ARTIFACT_REGISTRY_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_DOCKER}/${_IMAGE_NAME}"
+        TAG="${SHORT_SHA}"
+        if [[ -z "$${TAG}" ]]; then TAG="manual"; fi
+        docker build -t "$${IMAGE}:latest" -t "$${IMAGE}:$${TAG}" -f gcp/builder/Dockerfile gcp/
+        docker push "$${IMAGE}" --all-tags
+  
+images:
+  - ${_ARTIFACT_REGISTRY_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_DOCKER}/${_IMAGE_NAME}

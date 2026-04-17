@@ -1,0 +1,9 @@
+# Local Docker Registry v2 for testing (insecure HTTP on localhost:5000).
+# See README.md for Docker daemon insecure-registries setup.
+services:
+  registry:
+    image: registry:2
+    ports:
+      - "5000:5000"
+    environment:
+      REGISTRY_STORAGE_FILESYSTEM_ROOT: /var/lib/registry

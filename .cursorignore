@@ -1,0 +1,20 @@
+# Compiled Python bytecode
+*.py[cod]
+
+# Log files
+*.log
+
+
+# edit
+*.egg-info/
+
+# temporary files
+.*_cache/*
+.venv/*
+pkg_data/*
+data/*
+tmp/*
+uv.lock
+
+config/
+
