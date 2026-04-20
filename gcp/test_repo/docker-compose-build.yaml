@@ -1,0 +1,17 @@
+services:
+  test_repo:
+    image: ${REGISTRY}/${PACKAGE_NAME}:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+      secrets:
+        - source: uv_index_gcp_username
+          target: uv_index_gcp_username
+        - source: uv_index_gcp_password
+          target: uv_index_gcp_password
+
+secrets:
+  uv_index_gcp_username:
+    environment: UV_INDEX_GCP_USERNAME
+  uv_index_gcp_password:
+    environment: UV_INDEX_GCP_PASSWORD

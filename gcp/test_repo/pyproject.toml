@@ -1,0 +1,31 @@
+[project]
+name = "test_repo"
+version = "0.0.1"
+description = "Test repo for Scryn"
+authors = [
+    { name = "Pedro Queiros", email = "pedro.queiros@scryn.co" },
+]
+requires-python = ">=3.13,<3.14"
+readme = "README.md"
+maintainers = [
+    { name = "Pedro Queiros", email = "pedro.queiros@scryn.co" },
+]
+
+[project.urls]
+Repository = "https://github.com/scryn-co/test_repo"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/test_repo"]
+
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.wheels]
+remote_server_wheels_path = ""
+remote_server_address = ""
+remote_server_port = ""
+
+
+
