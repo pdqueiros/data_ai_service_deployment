@@ -4,7 +4,7 @@ set -euo pipefail
 CB_WORKSPACE="${CB_WORKSPACE:-/workspace}"
 source "${CB_WORKSPACE}/.cb-build-env"
 IMAGE_NAME="${REGISTRY}/${PACKAGE_NAME}"
-# production promotion always pulls the staging tag (matches former Azure production pipelines).
+# Production promotion always pulls the matching staging tag.
 IMAGE_NAME_STAGING="${IMAGE_NAME}:staging_${PACKAGE_VERSION}"
 docker pull "${IMAGE_NAME_STAGING}"
 docker tag "${IMAGE_NAME_STAGING}" "${IMAGE_NAME}:production_${PACKAGE_VERSION}"

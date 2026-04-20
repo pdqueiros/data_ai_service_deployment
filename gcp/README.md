@@ -1,6 +1,6 @@
 # GCP Cloud Build — CI/CD Templates
 
-Migrated from Azure DevOps pipelines. Uses **Google Cloud Build**, **Artifact Registry** (Docker + PyPI), and optional **Cloud Run** deploy.
+Uses **Google Cloud Build**, **Artifact Registry** (Docker + PyPI), and optional **Cloud Run** deploy.
 
 **Read top-to-bottom in order:**
 
@@ -8,7 +8,7 @@ Migrated from Azure DevOps pipelines. Uses **Google Cloud Build**, **Artifact Re
 2. [GCP: initial setup](#2-gcp-initial-setup) — one-time project bootstrap (APIs, Artifact Registry, service account, GitHub, builder image).
 3. [GCP: setup triggers](#3-gcp-setup-triggers) — per-microservice Cloud Build triggers (staging + production).
 4. [GCP: setup consumer repo](#4-gcp-setup-consumer-repo) — files that must live in each microservice repo for the triggers to do anything useful.
-5. [Reference](#reference) — substitutions, env vars, private indexes, Azure mapping.
+5. [Reference](#reference) — substitutions, env vars, private indexes, runtime deployment.
 
 > Sections 3 and 4 are both per-microservice. Operationally you'll do **4 first** (commit files, push branches), then **3** (create triggers). They're split so that "here are all the GCP-side `gcloud` commands" lives in one place and "here are all the files in the consumer repo" in another.
 
@@ -42,12 +42,8 @@ gcp/
 │   └── README.md
 ├── Makefile                              # Entry point: `make help` — drives the pipeline
 │                                         #   in either MODE=local (default) or MODE=cloud
-└── test_repo/                            # Example consumer repo (mimics a service)
-    ├── cloudbuild.yaml
-    ├── pyproject.toml
-    ├── docker-compose-build.yaml
-    ├── Dockerfile
-    └── src/test_repo/
+└── templates/
+    └── cloudbuild.yaml                   # Copy into each consumer repo
 ```
 
 ### How it works — the builder image pattern
@@ -322,7 +318,7 @@ gcloud builds repositories list --project="$PROJECT_ID" --region="$REGION" --con
 
 The `NAME` column in the second output is the linked-repo name you'll pass as `DEPLOY_REPO_NAME` (Section 2.6) and `CONSUMER_REPO` (Section 3) — **not** the raw GitHub slug.
 
-> **Push vs PR:** all trigger commands in this README use `--branch-pattern`, so they fire only on pushes to the matching branch, not on pull requests. This matches the old Azure DevOps behavior.
+> **Push vs PR:** all trigger commands in this README use `--branch-pattern`, so they fire only on pushes to the matching branch, not on pull requests.
 
 ### 2.6 Builder image
 
@@ -393,7 +389,7 @@ gcloud builds triggers create github \
   --substitutions="_STAGE_NAME=production,$SUBS"
 ```
 
-The triggers only fire when a push to the matching branch includes a change to `CHANGELOG.md`. That's intentional — it's how the old Azure pipelines gated staging/production releases, and it means ordinary feature-branch work never kicks off a build.
+The triggers only fire when a push to the matching branch includes a change to `CHANGELOG.md`. This keeps release builds explicit and means ordinary feature-branch work never kicks off a build.
 
 ### 3.2 Verify
 
@@ -419,7 +415,7 @@ You can also check it on the GCP UI [here](https://console.cloud.google.com/arti
 
 ## 4. GCP: setup consumer repo
 
-What every microservice repo needs so the triggers in Section 3 actually do something. See [`test_repo/`](test_repo/) for a complete worked example.
+What every microservice repo needs so the triggers in Section 3 actually do something.
 
 ### 4.1 Required files at the repo root
 
@@ -427,7 +423,7 @@ What every microservice repo needs so the triggers in Section 3 actually do some
 |------|---------|
 | `cloudbuild.yaml` | Copied from [`templates/cloudbuild.yaml`](templates/cloudbuild.yaml); edited for this repo (see 4.2). |
 | `Dockerfile` | Builds the runtime image (if `HAS_IMAGE=true`). |
-| `docker-compose-build.yaml` | Tells `docker compose` which image to build and wires private-index build args (see 4.3). |
+| `docker-compose-build.yaml` | Tells `docker compose` which image to build and wires private-index BuildKit secrets(if `HAS_IMAGE=true`)  (see 4.3). |
 | `pyproject.toml` | Package metadata + `[dependency-groups].checks` if you want tests (see Architecture § Test dependencies). |
 | `CHANGELOG.md` | Gate file for the triggers. Bump it to release — pushes that don't touch it don't build. |
 | `src/…` | Your package code (standard layout). |
@@ -463,35 +459,122 @@ steps:
       # - CLOUD_RUN_REGION=<region>
 ```
 
-See the [Azure → GCP mapping](#azure--gcp-mapping) table at the bottom for the flag combination that matches each Azure template you were using.
+Set these three flags to match your desired build, package, and test behavior for each consumer repo.
 
-### 4.3 Private Python index auth
+### 4.3 Private Python index auth (Artifact Registry)
 
-If your consumer repo depends on private packages hosted in Artifact Registry PyPI, auth is automatic — but the consumer's `docker-compose-build.yaml` and `Dockerfile` must propagate two build args.
+Use a named `uv` index and inject credentials with BuildKit secrets. This keeps credentials out of Docker args/history.
 
-**`docker-compose-build.yaml`:**
+**`pyproject.toml` (consumer repo):**
 
-```yaml
-build:
-  args:
-    - UV_INDEX_PASSWORD=${UV_INDEX_PASSWORD:-}
-    - PYPI_INDEX_URL=${PYPI_INDEX_URL:-}
+```toml
+[[tool.uv.index]]
+name = "gcp"
+url = "https://europe-west1-python.pkg.dev/<project-id>/<pypi-repo>/simple/"
+explicit = true
 ```
 
-**`Dockerfile`:**
+If a dependency should resolve only from that index:
+
+```toml
+[tool.uv.sources]
+my-private-package = { index = "gcp" }
+```
+
+`uv` reads credentials from:
+- `UV_INDEX_GCP_USERNAME`
+- `UV_INDEX_GCP_PASSWORD`
+
+**`docker-compose-build.yaml` (consumer repo):**
+
+```yaml
+services:
+  app:
+    image: ${REGISTRY}/${PACKAGE_NAME}:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+      secrets:
+        - source: uv_index_gcp_username
+          target: uv_index_gcp_username
+        - source: uv_index_gcp_password
+          target: uv_index_gcp_password
+
+secrets:
+  uv_index_gcp_username:
+    environment: UV_INDEX_GCP_USERNAME
+  uv_index_gcp_password:
+    environment: UV_INDEX_GCP_PASSWORD
+```
+
+**`Dockerfile` (consumer repo):**
 
 ```dockerfile
-ARG UV_INDEX_PASSWORD=""
-ARG PYPI_INDEX_URL=""
-RUN if [ -n "$PYPI_INDEX_URL" ] && [ -n "$UV_INDEX_PASSWORD" ]; then \
-      export UV_EXTRA_INDEX_URL="https://oauth2accesstoken:${UV_INDEX_PASSWORD}@${PYPI_INDEX_URL#https://}"; \
-    fi && \
+# syntax=docker/dockerfile:1.7
+RUN --mount=type=secret,id=uv_index_gcp_username \
+    --mount=type=secret,id=uv_index_gcp_password \
+    export UV_INDEX_GCP_USERNAME="$(cat /run/secrets/uv_index_gcp_username)" && \
+    export UV_INDEX_GCP_PASSWORD="$(cat /run/secrets/uv_index_gcp_password)" && \
     uv sync --all-extras
 ```
 
-At build time, `docker-compose-action.sh build` fetches a short-lived OAuth2 token via `gcloud auth print-access-token` and passes both args into the build. When they're empty (e.g. local testing with no private deps), `uv sync` falls back to public PyPI. See [`test_repo/Dockerfile`](test_repo/Dockerfile) for the full working example.
+At build time, `docker-compose-action.sh build` exports:
+- `UV_INDEX_GCP_USERNAME=oauth2accesstoken`
+- `UV_INDEX_GCP_PASSWORD=$(gcloud auth print-access-token)`
 
-**Host-side package tests** (`run-package-staging-tests.sh`) use `keyrings.google-artifactregistry-auth` which auto-authenticates via the Cloud Build service account — nothing to wire manually.
+for Cloud Build runs (or accepts values already provided by the environment).
+
+#### `Makefile-consumer` (self-contained local commands)
+
+If you want local builds/installs to be self-contained (no helper scripts), copy [`templates/Makefile-consumer`](templates/Makefile-consumer) into the consumer repo root and adapt as needed.
+
+#### Generating long-lived fallback credentials (no `gcloud` environment)
+
+Use this only when the target environment cannot run `gcloud`/ADC. Keep short-lived tokens as the default everywhere else.
+
+1. **Create a dedicated read-only service account (one-time):**
+
+```bash
+PROJECT_ID="<project-id>"
+SA_NAME="artifact-registry-python-reader"
+SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+
+gcloud iam service-accounts create "${SA_NAME}" --project="${PROJECT_ID}"
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/artifactregistry.reader"
+```
+
+2. **Create a JSON key file for that service account:**
+
+```bash
+gcloud iam service-accounts keys create ar-reader-key.json \
+  --iam-account="${SA_EMAIL}" \
+  --project="${PROJECT_ID}"
+```
+
+3. **Base64-encode the key and set fallback vars:**
+
+```bash
+KEY_B64="$(base64 -w 0 ar-reader-key.json)"
+export UV_INDEX_GCP_LONG_USERNAME="_json_key_base64"
+export UV_INDEX_GCP_LONG_PASSWORD="${KEY_B64}"
+```
+
+4. **Run the self-contained consumer target:**
+
+```bash
+make install-private
+```
+
+`Makefile-consumer` maps these fallback inputs into uv-native variables (`UV_INDEX_GCP_USERNAME` and `UV_INDEX_GCP_PASSWORD`) before running `uv`.
+
+**Recommended storage for fallback vars (local only):**
+- Put them in an untracked `.env.private` file in the consumer repo.
+- Load with `set -a; source .env.private; set +a` before running `make`.
+- Add `.env.private` to `.gitignore`.
+
+**Important:** you can generate the key locally, copy it (or only its base64 form) to a VM without `gcloud`, and use the fallback variables there. Do **not** bake the key into a Docker image (`ENV`, `ARG`, or `COPY`) because it can leak via image layers/history. Inject it at runtime or build-time via secret mounts/env only.
 
 ### 4.4 Optional: Cloud Run deploy after promotion
 
@@ -511,16 +594,56 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:$CB_SA_EMAIL" --role=roles/iam.serviceAccountUser --condition=None
 ```
 
-### 4.5 Optional: third-party private indexes via Secret Manager
+### 4.5 Build-time secrets pattern (Secret Manager -> Cloud Build -> BuildKit)
 
-If a repo pulls from a non-GCP private index (e.g. internal Artifactory, test PyPI), store the credential in Secret Manager and expose it to the build step by adding `availableSecrets` to the consumer `cloudbuild.yaml`:
+Use this for any build-only secret (private index credentials, API keys for build tooling, etc.).
+
+1. **Create secret(s) in Secret Manager:**
+
+```bash
+printf '%s' 'oauth2accesstoken' | gcloud secrets create uv-index-gcp-username \
+  --replication-policy=automatic --data-file=-
+
+printf '%s' '<token-or-password>' | gcloud secrets create uv-index-gcp-password \
+  --replication-policy=automatic --data-file=-
+```
+
+2. **Grant Cloud Build SA access:**
+
+```bash
+CB_SA_EMAIL="${CLOUD_BUILD_SA##*/}"
+gcloud secrets add-iam-policy-binding uv-index-gcp-username \
+  --member="serviceAccount:${CB_SA_EMAIL}" --role="roles/secretmanager.secretAccessor"
+gcloud secrets add-iam-policy-binding uv-index-gcp-password \
+  --member="serviceAccount:${CB_SA_EMAIL}" --role="roles/secretmanager.secretAccessor"
+```
+
+3. **Expose secrets in consumer `cloudbuild.yaml`:**
 
 ```yaml
 availableSecrets:
   secretManager:
-    - versionName: projects/$PROJECT_ID/secrets/third-party-index-password/versions/latest
-      env: UV_INDEX_PASSWORD
+    - versionName: projects/$PROJECT_ID/secrets/uv-index-gcp-username/versions/latest
+      env: UV_INDEX_GCP_USERNAME
+    - versionName: projects/$PROJECT_ID/secrets/uv-index-gcp-password/versions/latest
+      env: UV_INDEX_GCP_PASSWORD
+
+steps:
+  - name: ${_ARTIFACT_REGISTRY_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REGISTRY_DOCKER}/${_IMAGE_NAME}
+    secretEnv:
+      - UV_INDEX_GCP_USERNAME
+      - UV_INDEX_GCP_PASSWORD
 ```
+
+4. **Consume via BuildKit secrets** in `docker-compose-build.yaml` + `Dockerfile` as shown in Section 4.3.
+
+5. **Rotate secrets** by adding a new secret version and keeping `versions/latest` in Cloud Build:
+
+```bash
+printf '%s' '<new-token-or-password>' | gcloud secrets versions add uv-index-gcp-password --data-file=-
+```
+
+This pattern keeps secrets out of source control, avoids plaintext build args, and limits exposure to build time only.
 
 ---
 
@@ -571,16 +694,3 @@ Production steps upload wheels via `twine` with `oauth2accesstoken` + `gcloud au
 | **GCE + Docker Compose** | `gcloud auth configure-docker REGION-docker.pkg.dev` then `docker pull`. |
 | **GKE** | Reference the Artifact Registry image in Kubernetes manifests. |
 
-### Azure → GCP mapping
-
-Each Azure template maps to a combination of the three pipeline flags in the consumer's `cloudbuild.yaml` (`steps[0].env`):
-
-| Azure template | `HAS_IMAGE` | `HAS_PACKAGE` | `TEST_KIND` |
-|----------------|:-----------:|:-------------:|:-----------:|
-| `azure/package_and_image/` | `true` | `true` | `in_image` |
-| `azure/package_and_image_no_test/` | `true` | `true` | `""` |
-| `azure/image_only/` | `true` | `false` | `in_image` |
-| `azure/image_only_no_test/` | `true` | `false` | `""` |
-| `azure/package_only/` | `false` | `true` | `host_package` |
-| `azure/package_only_no_test/` | `false` | `true` | `""` |
-| `azure/package_test_image/` | `true` | `true` | `host_package` |
