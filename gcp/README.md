@@ -12,6 +12,33 @@ Uses **Google Cloud Build**, **Artifact Registry** (Docker + PyPI), and optional
 
 > Sections 3 and 4 are both per-microservice. Operationally you'll do **4 first** (commit files, push branches), then **3** (create triggers). They're split so that "here are all the GCP-side `gcloud` commands" lives in one place and "here are all the files in the consumer repo" in another.
 
+## TL;DR (Consumer Onboarding)
+
+For a new consumer repo, do this:
+
+1. Add required files at repo root:
+   - `cloudbuild.yaml` (copy from `gcp/templates/cloudbuild.yaml`)
+   - `Dockerfile` (if image is required)
+   - `docker-compose-build.yaml` (if image is required)
+   - `pyproject.toml`
+   - `CHANGELOG.md` (use commitizen_versioning to create it)
+   - `Makefile`
+2. Push those files to both `staging` and `production` branches.
+3. From this deployment repo, load env and export required trigger variables:
+
+```bash
+source gcp/.env
+export CONSUMER_REPO="pdqueiros-child_test_repo"
+export GITHUB_REPO_URI="https://github.com/scryn-co/child_test_repo.git"
+```
+
+4. Create/link triggers:
+
+```bash
+cd gcp
+make link-and-create-triggers
+```
+
 ---
 
 ## Architecture
@@ -357,12 +384,35 @@ One pair of triggers (staging + production) per consumer microservice repo.
 
 > **Prerequisite**: the consumer repo must be linked in the GitHub connection (Section 2.5) and must contain the files from Section 4 on the `staging` / `production` branches. Triggers can be created before the files exist, but they won't *fire* on a push until `CHANGELOG.md` (the path filter below) shows up on the matching branch.
 
-### 3.1 Staging + production triggers
+
+### 3.1 One-command automation (link + create triggers)
+
+You can automate the Section 3.1 flow with the `gcp/Makefile` target below.
+
+From repo root:
+
+```bash
+source gcp/.env
+cd gcp
+make link-and-create-triggers \
+  CONSUMER_REPO="pdqueiros-child_test_repo" \
+  GITHUB_REPO_URI="https://github.com/scryn-co/child_test_repo.git"
+```
+
+Notes:
+
+- `CONSUMER_REPO` is required and should be the linked repository name used by Cloud Build.
+- `GITHUB_REPO_URI` is required.
+- The target is idempotent: it skips linking if the repo already exists and skips trigger creation if triggers already exist.
+
+
+### 3.2 Manual Staging + production triggers
 
 Set `CONSUMER_REPO` to the linked name for that microservice, then run both commands:
 
 ```bash
-CONSUMER_REPO="pdqueiros-test_repo"          # real linked name (has underscore)
+source gcp/.env
+CONSUMER_REPO="pdqueiros-child_test_repo"          # real linked name (has underscore)
 TRIGGER_BASE="${CONSUMER_REPO//_/-}"         # pdqueiros-test-repo (no underscores)
 
 SUBS="_ARTIFACT_REGISTRY_LOCATION=$REGION,_ARTIFACT_REGISTRY_DOCKER=$ARTIFACT_REGISTRY_DOCKER,_ARTIFACT_REGISTRY_PYPI=$ARTIFACT_REGISTRY_PYPI,_IMAGE_NAME=$IMAGE_NAME"

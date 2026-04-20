@@ -47,6 +47,9 @@ help: ## Show this help
 	  '                                  e.g. make MODE=cloud package-and-image' \
 	  '  REPO  path to consumer repo     Defaults to ./test_repo' \
 	  '                                  e.g. make REPO=/path/to/my-service image-only' \
+	  '  CONSUMER_REPO linked repo name  Required for link-and-create-triggers' \
+	  '                                  e.g. pdqueiros-child_test_repo' \
+	  '  GITHUB_REPO_URI GitHub clone URI Required for link-and-create-triggers' \
 	  '' \
 	  'MODE=local  (no GCP account needed, no env vars required)' \
 	  '  Auto-starts local stand-ins for Artifact Registry and points the pipeline at them:' \
@@ -73,6 +76,7 @@ help: ## Show this help
 	  '  make package-and-image-full                 # staging then production, end-to-end' \
 	  '  make all                                    # every variant end-to-end' \
 	  '  source gcp/.env && MODE=cloud make package-and-image' \
+	  '  source gcp/.env && make link-and-create-triggers CONSUMER_REPO=pdqueiros-child_test_repo GITHUB_REPO_URI=https://github.com/scryn-co/child_test_repo.git' \
 	  '' \
 	  'Targets:'
 	@awk 'BEGIN {FS = ":.*## "} \
@@ -95,6 +99,49 @@ registry-down: ## Stop local registries (keeps uploaded images and wheels)
 registry-reset: ## Stop local registries AND delete all images and wheels
 	docker compose -f local/docker-compose.registry.yaml down -v
 	docker compose -f local/docker-compose.pypi.yaml down -v
+
+# ── trigger automation (consumer repo) ───────────────────────────────
+.PHONY: link-and-create-triggers
+link-and-create-triggers: ## Link consumer repo (if needed) and create staging/production triggers
+	: "$${PROJECT_ID:?source gcp/.env first (PROJECT_ID missing)}"
+	: "$${PROJECT_NUMBER:?source gcp/.env first (PROJECT_NUMBER missing)}"
+	: "$${REGION:?source gcp/.env first (REGION missing)}"
+	: "$${CONNECTION_NAME:?source gcp/.env first (CONNECTION_NAME missing)}"
+	: "$${CLOUD_BUILD_SA:?source gcp/.env first (CLOUD_BUILD_SA missing)}"
+	: "$${ARTIFACT_REGISTRY_DOCKER:?source gcp/.env first (ARTIFACT_REGISTRY_DOCKER missing)}"
+	: "$${ARTIFACT_REGISTRY_PYPI:?source gcp/.env first (ARTIFACT_REGISTRY_PYPI missing)}"
+	: "$${IMAGE_NAME:?source gcp/.env first (IMAGE_NAME missing)}"
+	: "$${CONSUMER_REPO:?set CONSUMER_REPO (linked repository name)}"
+	: "$${GITHUB_REPO_URI:?set GITHUB_REPO_URI (e.g. https://github.com/org/repo.git)}"
+	TRIGGER_BASE="$${CONSUMER_REPO//_/-}"
+	SUBS="_ARTIFACT_REGISTRY_LOCATION=$${REGION},_ARTIFACT_REGISTRY_DOCKER=$${ARTIFACT_REGISTRY_DOCKER},_ARTIFACT_REGISTRY_PYPI=$${ARTIFACT_REGISTRY_PYPI},_IMAGE_NAME=$${IMAGE_NAME}"
+	REPO_PATH="projects/$${PROJECT_NUMBER}/locations/$${REGION}/connections/$${CONNECTION_NAME}/repositories/$${CONSUMER_REPO}"
+	if gcloud builds repositories describe "$${CONSUMER_REPO}" --project="$${PROJECT_ID}" --region="$${REGION}" --connection="$${CONNECTION_NAME}" >/dev/null 2>&1; then
+	  echo "Repository '$${CONSUMER_REPO}' already linked to connection '$${CONNECTION_NAME}'."
+	else
+	  echo "Linking repository '$${CONSUMER_REPO}' to connection '$${CONNECTION_NAME}'..."
+	  gcloud builds repositories create "$${CONSUMER_REPO}" \
+	    --project="$${PROJECT_ID}" --region="$${REGION}" \
+	    --connection="$${CONNECTION_NAME}" \
+	    --remote-uri="$${GITHUB_REPO_URI}"
+	fi
+	for stage in staging production; do
+	  trigger_name="$${TRIGGER_BASE}-$${stage}"
+	  if gcloud builds triggers describe "$${trigger_name}" --project="$${PROJECT_ID}" --region="$${REGION}" >/dev/null 2>&1; then
+	    echo "Trigger '$${trigger_name}' already exists; skipping."
+	    continue
+	  fi
+	  echo "Creating trigger '$${trigger_name}'..."
+	  gcloud builds triggers create github \
+	    --name="$${trigger_name}" \
+	    --project="$${PROJECT_ID}" --region="$${REGION}" \
+	    --repository="$${REPO_PATH}" \
+	    --branch-pattern="^$${stage}$$" \
+	    --build-config=cloudbuild.yaml \
+	    --included-files='CHANGELOG.md' \
+	    --service-account="$${CLOUD_BUILD_SA}" \
+	    --substitutions="_STAGE_NAME=$${stage},$${SUBS}"
+	done
 
 # ── pipeline runner ──────────────────────────────────────────────────
 # $(call run-pipeline, HAS_IMAGE, HAS_PACKAGE, TEST_KIND, STAGE_NAME)
@@ -162,13 +209,13 @@ image-only-no-test: ## staging: image only, no tests
 	$(call run-pipeline,true,false,,staging)
 
 package-only: ## staging: package only, host pytest
-	$(call run-pipeline,false,true,host_package,staging)
+	$(call run-pipeline,false,true,in_host,staging)
 
 package-only-no-test: ## staging: package only, no tests
 	$(call run-pipeline,false,true,,staging)
 
 package-test-image: ## staging: package + image, host pytest
-	$(call run-pipeline,true,true,host_package,staging)
+	$(call run-pipeline,true,true,in_host,staging)
 
 # ── end-to-end (staging → production) ────────────────────────────────
 # To run a single variant in production only, pass STAGE_NAME=production,

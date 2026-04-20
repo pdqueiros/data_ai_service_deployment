@@ -7,9 +7,9 @@
 #   HAS_IMAGE   — true | false — build + push a Docker image in staging;
 #                               retag it in production
 #   HAS_PACKAGE — true | false — build + upload Python wheels in production
-#   TEST_KIND   — "" (none) | in_image | host_package
+#   TEST_KIND   — "" (none) | in_image | in_host
 #                 "in_image"     pytest inside the built Docker image (requires HAS_IMAGE)
-#                 "host_package" uv sync + pytest on the host
+#                 "in_host" uv sync + pytest on the host
 #
 # Optional env:
 #   ARTIFACT_REGISTRY_LOCATION, ARTIFACT_REGISTRY_DOCKER, ARTIFACT_REGISTRY_PYPI, DOCKER_COMPOSE_FILE
@@ -27,7 +27,7 @@ TEST_KIND="${TEST_KIND:-}"
 # ── validate flags ────────────────────────────────────────────────────
 case "${HAS_IMAGE}"   in true|false) ;; *) echo "error: HAS_IMAGE must be true|false, got '${HAS_IMAGE}'"   >&2; exit 1 ;; esac
 case "${HAS_PACKAGE}" in true|false) ;; *) echo "error: HAS_PACKAGE must be true|false, got '${HAS_PACKAGE}'" >&2; exit 1 ;; esac
-case "${TEST_KIND}"   in ""|in_image|host_package) ;; *) echo "error: TEST_KIND must be ''|in_image|host_package, got '${TEST_KIND}'" >&2; exit 1 ;; esac
+case "${TEST_KIND}"   in ""|in_image|in_host) ;; *) echo "error: TEST_KIND must be ''|in_image|in_host, got '${TEST_KIND}'" >&2; exit 1 ;; esac
 
 if [[ "${HAS_IMAGE}" == false && "${HAS_PACKAGE}" == false ]]; then
   echo "error: at least one of HAS_IMAGE or HAS_PACKAGE must be true" >&2
@@ -55,7 +55,7 @@ source "${CB_WORKSPACE}/.cb-build-env"
 # ── staging ───────────────────────────────────────────────────────────
 if [[ "${STAGE_NAME}" == "staging" ]]; then
 
-  if [[ "${TEST_KIND}" == "host_package" ]]; then
+  if [[ "${TEST_KIND}" == "in_host" ]]; then
     echo ""
     echo "=== [package-staging-tests] ==="
     bash "${SCRIPT_DIR}/run-package-staging-tests.sh"
