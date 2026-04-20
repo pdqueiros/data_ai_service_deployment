@@ -594,56 +594,38 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:$CB_SA_EMAIL" --role=roles/iam.serviceAccountUser --condition=None
 ```
 
-### 4.5 Build-time secrets pattern (Secret Manager -> Cloud Build -> BuildKit)
+### 4.5 Optional: Secret Manager for non-token build secrets
 
-Use this for any build-only secret (private index credentials, API keys for build tooling, etc.).
+Default private-index build auth uses short-lived tokens minted at build time:
 
-1. **Create secret(s) in Secret Manager:**
+- `docker-compose-action.sh build` exports `UV_INDEX_GCP_USERNAME=oauth2accesstoken`
+- `docker-compose-action.sh build` mints `UV_INDEX_GCP_PASSWORD=$(gcloud auth print-access-token)` when not already set
 
-```bash
-printf '%s' 'oauth2accesstoken' | gcloud secrets create uv-index-gcp-username \
-  --replication-policy=automatic --data-file=-
+So consumer `cloudbuild.yaml` does not need `availableSecrets`/`secretEnv` for `UV_INDEX_GCP_*` in the default path.
 
-printf '%s' '<token-or-password>' | gcloud secrets create uv-index-gcp-password \
-  --replication-policy=automatic --data-file=-
-```
+Use Secret Manager only for other static build-time secrets (for example third-party API keys used during build), then wire them with `availableSecrets` + `secretEnv` as needed.
 
-2. **Grant Cloud Build SA access:**
-
-```bash
-CB_SA_EMAIL="${CLOUD_BUILD_SA##*/}"
-gcloud secrets add-iam-policy-binding uv-index-gcp-username \
-  --member="serviceAccount:${CB_SA_EMAIL}" --role="roles/secretmanager.secretAccessor"
-gcloud secrets add-iam-policy-binding uv-index-gcp-password \
-  --member="serviceAccount:${CB_SA_EMAIL}" --role="roles/secretmanager.secretAccessor"
-```
-
-3. **Expose secrets in consumer `cloudbuild.yaml`:**
+Example:
 
 ```yaml
 availableSecrets:
   secretManager:
-    - versionName: projects/$PROJECT_ID/secrets/uv-index-gcp-username/versions/latest
-      env: UV_INDEX_GCP_USERNAME
-    - versionName: projects/$PROJECT_ID/secrets/uv-index-gcp-password/versions/latest
-      env: UV_INDEX_GCP_PASSWORD
+    - versionName: projects/$PROJECT_ID/secrets/my-build-api-key/versions/latest
+      env: MY_BUILD_API_KEY
 
 steps:
   - name: ${_ARTIFACT_REGISTRY_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REGISTRY_DOCKER}/${_IMAGE_NAME}
     secretEnv:
-      - UV_INDEX_GCP_USERNAME
-      - UV_INDEX_GCP_PASSWORD
+      - MY_BUILD_API_KEY
 ```
 
-4. **Consume via BuildKit secrets** in `docker-compose-build.yaml` + `Dockerfile` as shown in Section 4.3.
-
-5. **Rotate secrets** by adding a new secret version and keeping `versions/latest` in Cloud Build:
+Grant Cloud Build SA access for each secret:
 
 ```bash
-printf '%s' '<new-token-or-password>' | gcloud secrets versions add uv-index-gcp-password --data-file=-
+CB_SA_EMAIL="${CLOUD_BUILD_SA##*/}"
+gcloud secrets add-iam-policy-binding my-build-api-key \
+  --member="serviceAccount:${CB_SA_EMAIL}" --role="roles/secretmanager.secretAccessor"
 ```
-
-This pattern keeps secrets out of source control, avoids plaintext build args, and limits exposure to build time only.
 
 ---
 
